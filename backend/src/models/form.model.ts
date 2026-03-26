@@ -234,3 +234,33 @@ function parseFormRow(row: RowDataPacket): Form {
     is_closed: Boolean(row.is_closed),
   } as Form;
 }
+
+export async function trackFormView(formId: string): Promise<void> {
+  const today = new Date().toISOString().split('T')[0];
+  const id = uuidv4();
+  await pool.execute(
+    `INSERT INTO analytics (id, form_id, date, views) VALUES (?, ?, ?, 1)
+     ON DUPLICATE KEY UPDATE views = views + 1`,
+    [id, formId, today]
+  );
+}
+
+export async function getFormWithStats(formId: string, userId: string): Promise<object | null> {
+  const [rows] = await pool.execute<import('mysql2').RowDataPacket[]>(
+    `SELECT f.*, 
+       (SELECT SUM(views) FROM analytics WHERE form_id = f.id) as total_views,
+       (SELECT SUM(submissions) FROM analytics WHERE form_id = f.id) as total_submissions_from_analytics
+     FROM forms f WHERE f.id = ? AND f.user_id = ?`,
+    [formId, userId]
+  );
+  if (!rows[0]) return null;
+  const row = rows[0];
+  return {
+    ...row,
+    schema: typeof row.schema === 'string' ? JSON.parse(row.schema) : row.schema,
+    settings: typeof row.settings === 'string' ? JSON.parse(row.settings) : row.settings,
+    theme: typeof row.theme === 'string' ? JSON.parse(row.theme) : row.theme,
+    is_published: Boolean(row.is_published),
+    is_closed: Boolean(row.is_closed),
+  };
+}

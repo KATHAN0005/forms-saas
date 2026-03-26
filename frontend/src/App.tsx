@@ -12,6 +12,8 @@ import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { BuilderPage } from '@/components/builder/BuilderPage';
 import { AnalyticsPage } from '@/components/analytics/AnalyticsPage';
 import { PublicFormPage } from '@/components/form/PublicFormPage';
+import { NotFoundPage } from '@/pages/NotFoundPage';
+import { ProfilePage } from '@/pages/ProfilePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
@@ -98,9 +100,20 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <ProfilePage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Templates redirect */}
+        <Route path="/templates" element={<Navigate to="/dashboard?tab=templates" replace />} />
 
         {/* Fallback */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
   );

@@ -15,6 +15,9 @@ import { logger } from './utils/logger';
 import authRoutes from './routes/auth.routes';
 import formRoutes from './routes/form.routes';
 import responseRoutes from './routes/response.routes';
+import aiRoutes from './routes/ai.routes';
+import webhookRoutes from './routes/webhook.routes';
+import userRoutes from './routes/user.routes';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '5000');
@@ -63,7 +66,10 @@ app.get('/health', (_req, res) => {
 // Routes
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/forms', formRoutes);
+app.use('/api/forms', webhookRoutes);
 app.use('/api', responseRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/user', userRoutes);
 
 // 404 handler
 app.use(notFoundHandler);

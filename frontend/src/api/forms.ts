@@ -71,4 +71,31 @@ export const formsApi = {
   deleteFolder: async (id: string) => {
     await apiClient.delete(`/forms/folders/${id}`);
   },
+
+  // Templates
+  getTemplates: async (): Promise<FormListItem[]> => {
+    const res = await apiClient.get<{ success: boolean; data: { forms: FormListItem[] } }>('/forms/templates/list');
+    return res.data.data.forms;
+  },
+
+  // AI generation
+  generateFromAI: async (prompt: string): Promise<{ title: string; description: string; schema: FormSchema }> => {
+    const res = await apiClient.post<{ success: boolean; data: { title: string; description: string; schema: FormSchema } }>('/ai/generate', { prompt });
+    return res.data.data;
+  },
+
+  // Webhooks
+  getWebhooks: async (formId: string): Promise<unknown[]> => {
+    const res = await apiClient.get<{ success: boolean; data: { webhooks: unknown[] } }>(`/forms/${formId}/webhooks`);
+    return res.data.data.webhooks;
+  },
+
+  createWebhook: async (formId: string, data: { url: string; events: string[]; secret?: string }): Promise<unknown> => {
+    const res = await apiClient.post<{ success: boolean; data: { webhook: unknown } }>(`/forms/${formId}/webhooks`, data);
+    return res.data.data.webhook;
+  },
+
+  deleteWebhook: async (formId: string, webhookId: string): Promise<void> => {
+    await apiClient.delete(`/forms/${formId}/webhooks/${webhookId}`);
+  },
 };

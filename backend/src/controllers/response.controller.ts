@@ -9,8 +9,23 @@ import {
   getFormAnalytics,
 } from '../models/response.model';
 import { findFormBySlug, findFormById, incrementResponseCount } from '../models/form.model';
+import { findUserById } from '../models/user.model';
 import { createError } from '../middleware/errorHandler';
 import { triggerWebhooks } from '../utils/webhook';
+import { sendFormResponseNotification } from '../utils/email';
+import pool from '../config/database';
+import { logger } from '../utils/logger';
+
+async function trackSubmission(formId: string): Promise<void> {
+  const today = new Date().toISOString().split('T')[0];
+  const { v4: uuidv4 } = await import('uuid');
+  const id = uuidv4();
+  await pool.execute(
+    `INSERT INTO analytics (id, form_id, date, submissions) VALUES (?, ?, ?, 1)
+     ON DUPLICATE KEY UPDATE submissions = submissions + 1`,
+    [id, formId, today]
+  );
+}
 
 export async function submitResponse(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -51,12 +66,24 @@ export async function submitResponse(req: Request, res: Response, next: NextFunc
 
     await incrementResponseCount(form.id);
 
+    // Track analytics submission async
+    trackSubmission(form.id).catch(() => {});
+
     // Trigger webhooks async
     triggerWebhooks(form.id, 'response.submitted', {
       form_id: form.id,
       response_id: response.id,
       answers,
     }).catch(() => {});
+
+    // Send email notification to form owner if enabled
+    if (settings.email_notifications && settings.notification_email) {
+      const owner = await findUserById(form.user_id).catch(() => null);
+      const notifyEmail = String(settings.notification_email);
+      sendFormResponseNotification(notifyEmail, form.title, response.id).catch(
+        (e) => logger.warn('Failed to send notification email:', e)
+      );
+    }
 
     const confirmationMessage = String(settings.confirmation_message || 'Thank you for your response!');
 
