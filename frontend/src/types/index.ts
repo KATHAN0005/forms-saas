@@ -34,9 +34,12 @@ export interface Question {
   logic?: ConditionalLogic[];
   placeholder?: string;
   maxRating?: number;
+  ratingLabelMin?: string;
+  ratingLabelMax?: string;
   allowMultiple?: boolean;
   acceptedFileTypes?: string[];
   maxFileSize?: number;
+  randomizeOptions?: boolean;
 }
 
 export interface FormSchema {
@@ -57,6 +60,7 @@ export interface FormSettings {
   email_notifications?: boolean;
   notification_email?: string;
   accept_responses?: boolean;
+  time_limit?: number; // seconds
 }
 
 export interface FormTheme {
@@ -124,6 +128,7 @@ export interface Response {
 
 export interface Analytics {
   total_responses: number;
+  total_views?: number;
   daily_responses: { date: string; count: number }[];
   question_stats: Record<string, {
     counts: Record<string, number>;
