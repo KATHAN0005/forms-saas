@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { v4 as uuidv4 } from 'uuid';
+import { generateId } from '../utils/uuid';
 import { Question, QuestionType, FormSchema, FormSettings, FormTheme } from '../types';
 
 interface HistoryState {
@@ -134,7 +134,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
 
   addQuestion: (type) => {
     const state = get();
-    const id = uuidv4();
+    const id = generateId();
     const question: Question = {
       id,
       type,
@@ -186,7 +186,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
     const state = get();
     const question = state.schema.questions[id];
     if (!question) return;
-    const newId = uuidv4();
+    const newId = generateId();
     const newQuestion = { ...question, id: newId };
     const idx = state.schema.order.indexOf(id);
     const newOrder = [...state.schema.order];

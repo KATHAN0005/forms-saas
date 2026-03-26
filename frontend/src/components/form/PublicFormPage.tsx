@@ -91,6 +91,11 @@ export function PublicFormPage() {
     return Object.keys(errors).length === 0;
   };
 
+  const handlePasswordModalClose = () => {
+    setPasswordModalOpen(false);
+    setError('This form requires a password. Please contact the form owner.');
+  };
+
   const handleSubmit = async () => {
     if (!form || !slug) return;
     if (!validate()) {
@@ -193,7 +198,7 @@ export function PublicFormPage() {
       <Modal
         isOpen={passwordModalOpen}
         title="Password Protected"
-        onClose={() => {}}
+        onClose={handlePasswordModalClose}
         footer={
           <button
             onClick={() => loadForm(formPassword)}
