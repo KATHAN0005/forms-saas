@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { formsApi } from '@/api/forms';
@@ -25,7 +25,31 @@ export function PublicFormPage() {
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [formPassword, setFormPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [currentPage, setCurrentPage] = useState(0);
   const sessionId = useRef(generateId());
+
+  // Split questions into pages separated by section_break questions.
+  // A section_break begins a new page and is displayed as that page's header.
+  const pages = useMemo<string[][]>(() => {
+    if (!form) return [];
+    const result: string[][] = [];
+    let current: string[] = [];
+    for (const qid of form.schema.order) {
+      const q = form.schema.questions[qid];
+      if (!q) continue;
+      if (q.type === 'section_break') {
+        if (current.length > 0) result.push(current);
+        current = [qid];
+      } else {
+        current.push(qid);
+      }
+    }
+    if (current.length > 0) result.push(current);
+    return result.length > 0 ? result : [[]];
+  }, [form]);
+
+  const isMultiPage = pages.length > 1;
+  const isLastPage = currentPage >= pages.length - 1;
 
   const loadForm = useCallback(async (password?: string) => {
     if (!slug) return;
@@ -74,10 +98,12 @@ export function PublicFormPage() {
     return () => clearInterval(timer);
   }, [form, answers, slug, submitted]);
 
-  const validate = (): boolean => {
+  // Validate only the questions on a given page (or all if page not specified)
+  const validatePage = (pageIndex: number): boolean => {
     if (!form) return false;
+    const qids = pages[pageIndex] ?? [];
     const errors: Record<string, string> = {};
-    for (const qid of form.schema.order) {
+    for (const qid of qids) {
       const question = form.schema.questions[qid];
       if (!question || question.type === 'section_break') continue;
       if (question.required) {
@@ -87,8 +113,27 @@ export function PublicFormPage() {
         }
       }
     }
-    setValidationErrors(errors);
+    setValidationErrors((prev) => {
+      // Clear old errors for this page, then add new ones
+      const next = { ...prev };
+      for (const qid of qids) delete next[qid];
+      return { ...next, ...errors };
+    });
     return Object.keys(errors).length === 0;
+  };
+
+  const handleNextPage = () => {
+    if (!validatePage(currentPage)) {
+      toast.error('Please fill in all required fields.');
+      return;
+    }
+    setCurrentPage((p) => p + 1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handlePrevPage = () => {
+    setCurrentPage((p) => Math.max(0, p - 1));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handlePasswordModalClose = () => {
@@ -98,7 +143,7 @@ export function PublicFormPage() {
 
   const handleSubmit = async () => {
     if (!form || !slug) return;
-    if (!validate()) {
+    if (!validatePage(currentPage)) {
       toast.error('Please fill in all required fields.');
       return;
     }
@@ -137,7 +182,12 @@ export function PublicFormPage() {
       }).length
     : 0;
 
-  const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : 0;
+  // For multi-page forms show page-based progress, otherwise question-based progress
+  const progress = isMultiPage
+    ? Math.round(((currentPage + 1) / pages.length) * 100)
+    : totalQuestions > 0
+    ? Math.round((answeredCount / totalQuestions) * 100)
+    : 0;
 
   if (isLoading && !passwordModalOpen) {
     return (
@@ -229,10 +279,14 @@ export function PublicFormPage() {
         <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8 px-4">
           <div className="max-w-2xl mx-auto">
             {/* Progress bar */}
-            {form.settings.show_progress_bar && totalQuestions > 0 && (
+            {form.settings.show_progress_bar && (isMultiPage || totalQuestions > 0) && (
               <div className="mb-6">
                 <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1.5">
-                  <span>{answeredCount} of {totalQuestions} answered</span>
+                  {isMultiPage ? (
+                    <span>Step {currentPage + 1} of {pages.length}</span>
+                  ) : (
+                    <span>{answeredCount} of {totalQuestions} answered</span>
+                  )}
                   <span>{progress}%</span>
                 </div>
                 <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
@@ -244,28 +298,30 @@ export function PublicFormPage() {
               </div>
             )}
 
-            {/* Form header */}
-            <div
-              className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-4 border-t-4"
-              style={{ borderTopColor: form.theme?.primaryColor ?? '#3B82F6' }}
-            >
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{form.title}</h1>
-              {form.description && (
-                <p className="text-gray-600 dark:text-gray-400 mt-2">{form.description}</p>
-              )}
-              {form.settings.collect_email && (
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-3 flex items-center gap-1">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                  </svg>
-                  Email will be collected
-                </p>
-              )}
-            </div>
+            {/* Form header — only shown on the first page */}
+            {currentPage === 0 && (
+              <div
+                className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-4 border-t-4"
+                style={{ borderTopColor: form.theme?.primaryColor ?? '#3B82F6' }}
+              >
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{form.title}</h1>
+                {form.description && (
+                  <p className="text-gray-600 dark:text-gray-400 mt-2">{form.description}</p>
+                )}
+                {form.settings.collect_email && (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-3 flex items-center gap-1">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    Email will be collected
+                  </p>
+                )}
+              </div>
+            )}
 
-            {/* Questions */}
+            {/* Questions for the current page */}
             <div className="space-y-4">
-              {form.schema.order.map((qid) => {
+              {(pages[currentPage] ?? []).map((qid) => {
                 const question = form.schema.questions[qid];
                 if (!question) return null;
 
@@ -306,28 +362,57 @@ export function PublicFormPage() {
               })}
             </div>
 
-            {/* Submit button */}
-            <div className="mt-6 flex justify-end">
-              <button
-                onClick={handleSubmit}
-                disabled={isSubmitting}
-                className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg disabled:opacity-50 transition-colors"
-                style={{ backgroundColor: form.theme?.primaryColor ?? undefined }}
-              >
-                {isSubmitting ? (
-                  <>
-                    <Spinner size="sm" className="text-white" />
-                    Submitting...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                    Submit
-                  </>
-                )}
-              </button>
+            {/* Navigation buttons */}
+            <div className="mt-6 flex items-center justify-between">
+              {/* Back button */}
+              {isMultiPage && currentPage > 0 ? (
+                <button
+                  onClick={handlePrevPage}
+                  className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Back
+                </button>
+              ) : (
+                <div />
+              )}
+
+              {/* Next / Submit button */}
+              {isMultiPage && !isLastPage ? (
+                <button
+                  onClick={handleNextPage}
+                  className="flex items-center gap-2 px-6 py-2.5 text-sm font-medium text-white rounded-lg transition-colors"
+                  style={{ backgroundColor: form.theme?.primaryColor ?? '#3B82F6' }}
+                >
+                  Next
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-2 px-6 py-3 text-white font-medium rounded-lg disabled:opacity-50 transition-colors"
+                  style={{ backgroundColor: form.theme?.primaryColor ?? '#3B82F6' }}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Spinner size="sm" className="text-white" />
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                      Submit
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             {/* Footer */}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
@@ -21,11 +21,13 @@ import { responsesApi } from '@/api/responses';
 import { Spinner } from '@/components/ui/Spinner';
 import { ResponsesTable } from './ResponsesTable';
 import type { Form, Analytics } from '@/types';
-import { format } from 'date-fns';
+import { format, subDays, parseISO, isAfter } from 'date-fns';
 
 const CHART_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
+const POLL_INTERVAL_MS = 30_000;
 
 type ActiveTab = 'overview' | 'responses';
+type DateRange = 7 | 30 | 90;
 
 export function AnalyticsPage() {
   const { id: formId } = useParams<{ id: string }>();
@@ -35,10 +37,13 @@ export function AnalyticsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [isExporting, setIsExporting] = useState(false);
+  const [dateRange, setDateRange] = useState<DateRange>(30);
+  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!formId) return;
-    setIsLoading(true);
+    if (!silent) setIsLoading(true);
     try {
       const [loadedForm, loadedAnalytics] = await Promise.all([
         formsApi.get(formId),
@@ -46,16 +51,27 @@ export function AnalyticsPage() {
       ]);
       setForm(loadedForm);
       setAnalytics(loadedAnalytics);
+      setLastRefreshed(new Date());
     } catch {
-      toast.error('Failed to load analytics');
-      navigate('/dashboard');
+      if (!silent) {
+        toast.error('Failed to load analytics');
+        navigate('/dashboard');
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   }, [formId, navigate]);
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  // Real-time polling: refresh analytics every 30 seconds silently
+  useEffect(() => {
+    pollTimerRef.current = setInterval(() => load(true), POLL_INTERVAL_MS);
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
   }, [load]);
 
   const handleExport = async () => {
@@ -88,12 +104,26 @@ export function AnalyticsPage() {
     if (q && q.type !== 'section_break') questionTitles[qid] = q.title;
   });
 
-  const dailyData = analytics.daily_responses.map((d) => ({
+  // Filter daily responses to the selected date range
+  const cutoff = subDays(new Date(), dateRange);
+  const filteredDaily = analytics.daily_responses.filter((d) => {
+    try { return isAfter(parseISO(d.date), cutoff); } catch { return true; }
+  });
+
+  const dailyData = filteredDaily.map((d) => ({
     date: (() => {
-      try { return format(new Date(d.date), 'MMM d'); } catch { return d.date; }
+      try { return format(parseISO(d.date), 'MMM d'); } catch { return d.date; }
     })(),
     responses: d.count,
   }));
+
+  const periodResponses = filteredDaily.reduce((s, d) => s + d.count, 0);
+
+  // Completion rate: responses / views (if views data available)
+  const completionRate =
+    analytics.total_views && analytics.total_views > 0
+      ? Math.round((analytics.total_responses / analytics.total_views) * 100)
+      : null;
 
   // Build chart data for choice questions
   const choiceQuestions = questionOrder
@@ -134,6 +164,16 @@ export function AnalyticsPage() {
               Edit Form
             </button>
             <button
+              onClick={() => load(false)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              title={`Last refreshed: ${format(lastRefreshed, 'HH:mm:ss')}`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
+            <button
               onClick={handleExport}
               disabled={isExporting || analytics.total_responses === 0}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50 transition-colors"
@@ -149,7 +189,7 @@ export function AnalyticsPage() {
 
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <StatCard
             label="Total Responses"
             value={analytics.total_responses.toString()}
@@ -161,8 +201,8 @@ export function AnalyticsPage() {
             color="blue"
           />
           <StatCard
-            label="This Week"
-            value={analytics.daily_responses.slice(-7).reduce((s, d) => s + d.count, 0).toString()}
+            label={`Last ${dateRange} Days`}
+            value={periodResponses.toString()}
             icon={
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -170,6 +210,18 @@ export function AnalyticsPage() {
             }
             color="green"
           />
+          {completionRate !== null ? (
+            <StatCard
+              label="Completion Rate"
+              value={`${completionRate}%`}
+              icon={
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              }
+              color="blue"
+            />
+          ) : null}
           <StatCard
             label="Status"
             value={form.is_published ? 'Published' : 'Draft'}
@@ -182,28 +234,48 @@ export function AnalyticsPage() {
           />
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-1 mb-6 border-b border-gray-200 dark:border-gray-700">
-          {(['overview', 'responses'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2.5 text-sm font-medium capitalize border-b-2 transition-colors ${
-                activeTab === tab
-                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+        {/* Tabs + date-range selector */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 border-b border-gray-200 dark:border-gray-700 pb-0">
+          <div className="flex gap-1">
+            {(['overview', 'responses'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2.5 text-sm font-medium capitalize border-b-2 transition-colors ${
+                  activeTab === tab
+                    ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          {activeTab === 'overview' && (
+            <div className="flex items-center gap-1.5 pb-1">
+              <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">Range:</span>
+              {([7, 30, 90] as DateRange[]).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDateRange(d)}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                    dateRange === d
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {activeTab === 'overview' && (
           <div className="space-y-6">
             {/* Daily responses chart */}
             {dailyData.length > 0 && (
-              <ChartCard title="Daily Responses">
+              <ChartCard title={`Daily Responses — Last ${dateRange} Days`}>
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={dailyData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
